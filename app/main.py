@@ -1,15 +1,17 @@
+import os
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
 
+# Obtener la ruta absoluta del directorio actual (donde está main.py)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 app = FastAPI(title="RAGNAVOD Server")
 
-# Montar carpeta para videos (aquí vivirá el streaming más adelante)
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
-
-# Configurar plantillas HTML
-templates = Jinja2Templates(directory="app/templates")
+# Usar rutas absolutas para montar static y templates
+app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
