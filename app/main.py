@@ -13,7 +13,7 @@ app = FastAPI(title="RAGNAVOD Server")
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
-@app.get("/", methods=["GET", "HEAD"])
+@app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
