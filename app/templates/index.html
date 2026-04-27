@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!-- <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
@@ -14,5 +14,79 @@
         <p>Estado del Backend: <span style="color: white;">ONLINE</span></p>
         <p>Listo para recibir fragmentos de video...</p>
     </div>
+</body>
+</html> -->
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>RAGNAVOD - Protocol Lab</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        body { background: #0f0f0f; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; text-align: center; }
+        .container { max-width: 900px; margin: auto; padding: 20px; }
+        video { width: 100%; border: 2px solid #333; border-radius: 8px; background: #000; }
+        .controls { margin-top: 20px; display: flex; justify-content: center; gap: 10px; }
+        button { padding: 10px 20px; cursor: pointer; background: #1a73e8; color: white; border: none; border-radius: 4px; }
+        button:hover { background: #1557b0; }
+        .metrics { margin-top: 20px; padding: 15px; background: #1e1e1e; border-radius: 8px; text-align: left; }
+        .status-tag { color: #00ff00; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>RAGNAVOD <span style="font-size: 0.5em; color: #666;">VOD System v1.0</span></h1>
+        
+        <video id="video" controls></video>
+
+        <div class="controls">
+            <button onclick="loadVideo('bubbles')">Bubbles</button>
+            <button onclick="loadVideo('fishing')">Fishing</button>
+            <button onclick="loadVideo('flower')">Flower</button>
+        </div>
+
+        <div class="metrics">
+            <h3>Laboratorio de Métricas</h3>
+            <p>Video Actual: <span id="current-video">-</span></p>
+            <p>Protocolo: <span class="status-tag" id="protocol-info">Detectando... (Usa F12)</span></p>
+            <p>Latencia de Carga: <span id="load-time">0</span> ms</p>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const hls = new Hls();
+
+        function loadVideo(name) {
+            const startTime = performance.now();
+            const url = `/streams/${name}/index.m3u8`;
+            
+            document.getElementById('current-video').innerText = name;
+
+            if (Hls.isSupported()) {
+                hls.loadSource(url);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    const endTime = performance.now();
+                    document.getElementById('load-time').innerText = Math.round(endTime - startTime);
+                    video.play();
+                });
+            }
+            // Soporte para Safari
+            else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = url;
+                video.addEventListener('loadedmetadata', () => {
+                    video.play();
+                });
+            }
+        }
+
+        // Detección de Protocolo simple
+        if (window.chrome && window.chrome.loadTimes) {
+            const proto = window.performance.getEntriesByType('resource')[0].nextHopProtocol;
+            document.getElementById('protocol-info').innerText = proto || "H2/H3 (Verificar en Network tab)";
+        }
+    </script>
 </body>
 </html>
