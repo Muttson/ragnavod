@@ -17,13 +17,15 @@ app = FastAPI(title="RAGNAVOD Server")
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
-# 3. Modelos de datos (Pydantic)
+# 3. Modelos de datos (Pydantic) actualizados
 class VideoMetrics(BaseModel):
     video_name: str
     protocol: str
-    load_time_ms: float
-    avg_fragment_time: float
-    buffering_events: int
+    ttff_ms: float                  # Time to First Frame (TTFF)
+    fragment_load_time_ms: float    # Fragment Load Time (Throughput)
+    rebuffering_events: int         # Re-buffering Events
+    handshake_latency_ms: float     # Handshake Latency
+    jitter_ms: float                # Steady State Stability (Jitter)
 
 # 4. Rutas de Interfaz (Frontend)
 @app.get("/", response_class=HTMLResponse)
@@ -43,15 +45,27 @@ async def log_metrics(data: VideoMetrics):
         writer = csv.writer(f)
         # Escribir cabecera si el archivo es nuevo
         if not file_exists:
-            writer.writerow(["Timestamp", "Video", "Protocolo", "Startup_ms", "Avg_Frag_ms", "Stalls"])
+            writer.writerow([
+                "Timestamp", 
+                "Video", 
+                "Protocolo", 
+                "TTFF_ms", 
+                "Frag_Load_Time_ms", 
+                "Rebuffering_Events", 
+                "Handshake_Latency_ms", 
+                "Jitter_ms"
+            ])
         
+        # Escribir los datos recibidos
         writer.writerow([
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             data.video_name,
             data.protocol,
-            data.load_time_ms,
-            data.avg_fragment_time,
-            data.buffering_events
+            data.ttff_ms,
+            data.fragment_load_time_ms,
+            data.rebuffering_events,
+            data.handshake_latency_ms,
+            data.jitter_ms
         ])
     return {"status": "recorded"}
 
