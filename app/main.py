@@ -24,7 +24,7 @@ class VideoMetrics(BaseModel):
     ttff_ms: float                  # Time to First Frame (TTFF)
     fragment_load_time_ms: float    # Fragment Load Time (Throughput)
     rebuffering_events: int         # Re-buffering Events
-    handshake_latency_ms: float     # Handshake Latency
+    inter_arrival_jitter_ms: float  # Inter-arrival Jitter (Std Dev de tiempos de carga)
     jitter_ms: float                # Steady State Stability (Jitter)
 
 # 4. Rutas de Interfaz (Frontend)
@@ -52,7 +52,7 @@ async def log_metrics(data: VideoMetrics):
                 "TTFF_ms", 
                 "Frag_Load_Time_ms", 
                 "Rebuffering_Events", 
-                "Handshake_Latency_ms", 
+                "Inter_Arrival_Jitter_ms", 
                 "Jitter_ms"
             ])
         
@@ -64,7 +64,7 @@ async def log_metrics(data: VideoMetrics):
             data.ttff_ms,
             data.fragment_load_time_ms,
             data.rebuffering_events,
-            data.handshake_latency_ms,
+            data.inter_arrival_jitter_ms,
             data.jitter_ms
         ])
     return {"status": "recorded"}

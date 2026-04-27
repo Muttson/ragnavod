@@ -40,7 +40,7 @@
             <p>TTFF: <span id="metric-ttff" class="metric-value">0</span> ms</p>
             <p>Carga de Fragmento (Promedio): <span id="metric-frag" class="metric-value">0</span> ms</p>
             <p>Micro-cortes (Re-buffer): <span id="metric-stall" class="metric-value">0</span></p>
-            <p>Latencia Handshake: <span id="metric-handshake" class="metric-value">0</span> ms</p>
+            <p>Inter-arrival Jitter: <span id="metric-inter-jitter" class="metric-value">0</span> ms</p>
             <p>Estabilidad (Jitter): <span id="metric-jitter" class="metric-value">0</span> ms</p>
         </div>
     </div>
@@ -83,6 +83,7 @@
             if (fragmentTimes.length > 0) {
                 const avg = fragmentTimes.reduce((a, b) => a + b, 0) / fragmentTimes.length;
                 document.getElementById('metric-frag').innerText = avg.toFixed(2);
+                document.getElementById('metric-inter-jitter').innerText = calculateInterArrivalJitter(fragmentTimes).toFixed(2);
                 document.getElementById('metric-jitter').innerText = calculateJitter(fragmentTimes).toFixed(2);
             }
         }
@@ -140,6 +141,20 @@
             return sumDiff / (times.length - 1);
         }
 
+        // Calcular Inter-arrival Jitter (Desviación Estándar de tiempos de carga)
+        function calculateInterArrivalJitter(times) {
+            if (times.length < 2) return 0;
+            
+            // Calcular media
+            const mean = times.reduce((a, b) => a + b, 0) / times.length;
+            
+            // Calcular varianza
+            const variance = times.reduce((sum, time) => sum + Math.pow(time - mean, 2), 0) / times.length;
+            
+            // Desviación estándar (raíz cuadrada de varianza)
+            return Math.sqrt(variance);
+        }
+
         function loadVideo(name) {
             // Reiniciar métricas
             fragmentTimes = [];
@@ -155,7 +170,7 @@
             document.getElementById('metric-ttff').innerText = "0";
             document.getElementById('metric-frag').innerText = "0";
             document.getElementById('metric-stall').innerText = "0";
-            document.getElementById('metric-handshake').innerText = "0";
+            document.getElementById('metric-inter-jitter').innerText = "0";
             document.getElementById('metric-jitter').innerText = "0";
 
             const url = `/streams/${name}/index.m3u8`;
@@ -165,23 +180,13 @@
                 hls.attachMedia(video);
                 
                 hls.once(Hls.Events.MANIFEST_PARSED, () => {
-                    // Extraer protocolo y handshake
+                    // Extraer protocolo
                     setTimeout(() => {
                         const entries = window.performance.getEntriesByType('resource');
                         const manifestEntry = entries.find(r => r.name.includes('.m3u8'));
                         
                         if (manifestEntry) {
                             document.getElementById('protocol-info').innerText = manifestEntry.nextHopProtocol || "H2/H3";
-                            
-                            // Handshake Latency mejorado
-                            let handshake_ms = 0;
-                            if (manifestEntry.secureConnectionStart > 0) {
-                                handshake_ms = manifestEntry.connectEnd - manifestEntry.secureConnectionStart;
-                            } else {
-                                handshake_ms = manifestEntry.connectEnd - manifestEntry.connectStart;
-                            }
-                            if (handshake_ms < 0) handshake_ms = 0;
-                            document.getElementById('metric-handshake').innerText = handshake_ms.toFixed(2);
                         }
                     }, 500);
                     
@@ -210,11 +215,9 @@
             const avgFrag = fragmentTimes.length > 0 
                 ? fragmentTimes.reduce((a, b) => a + b, 0) / fragmentTimes.length 
                 : 0;
+            const interArrivalJitter = fragmentTimes.length > 0 ? calculateInterArrivalJitter(fragmentTimes) : 0;
             const jitter_ms = fragmentTimes.length > 0 ? calculateJitter(fragmentTimes) : 0;
             const protocolStr = document.getElementById('protocol-info').innerText;
-            
-            // Handshake desde la UI para consistencia
-            const handshake_ms = parseFloat(document.getElementById('metric-handshake').innerText) || 0;
 
             // Garantizar que TODOS los valores sean números válidos (nunca null ni undefined)
             const payload = {
@@ -223,7 +226,7 @@
                 ttff_ms: Math.max(0, parseFloat(ttff_ms.toFixed(2)) || 0),
                 fragment_load_time_ms: Math.max(0, parseFloat(avgFrag.toFixed(2)) || 0),
                 rebuffering_events: Math.max(0, parseInt(stallCount) || 0),
-                handshake_latency_ms: Math.max(0, parseFloat(handshake_ms.toFixed(2)) || 0),
+                inter_arrival_jitter_ms: Math.max(0, parseFloat(interArrivalJitter.toFixed(2)) || 0),
                 jitter_ms: Math.max(0, parseFloat(jitter_ms.toFixed(2)) || 0)
             };
 
