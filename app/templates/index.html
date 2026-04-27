@@ -9,19 +9,21 @@
         .container { max-width: 900px; margin: auto; padding: 20px; }
         video { width: 100%; border: 2px solid #333; border-radius: 8px; background: #000; }
         .controls { margin-top: 20px; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
-        button { padding: 10px 20px; cursor: pointer; background: #1a73e8; color: white; border: none; border-radius: 4px; }
+        button { padding: 10px 20px; cursor: pointer; background: #1a73e8; color: white; border: none; border-radius: 4px; font-weight: bold; }
         button:hover { background: #1557b0; }
         .btn-send { background: #28a745; }
         .btn-send:hover { background: #218838; }
-        .metrics { margin-top: 20px; padding: 15px; background: #1e1e1e; border-radius: 8px; text-align: left; }
+        .metrics { margin-top: 20px; padding: 15px; background: #1e1e1e; border-radius: 8px; text-align: left; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .metrics h3 { grid-column: span 2; margin-top: 0; border-bottom: 1px solid #333; padding-bottom: 10px; }
         .status-tag { color: #00ff00; font-weight: bold; }
+        .metric-value { color: #ffb74d; font-weight: bold; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>RAGNAVOD <span style="font-size: 0.5em; color: #666;">VOD System v1.0</span></h1>
         
-        <video id="video" controls></video>
+        <video id="video" controls muted></video>
 
         <div class="controls">
             <button onclick="loadVideo('bubbles')">Bubbles</button>
@@ -33,61 +35,110 @@
 
         <div class="metrics">
             <h3>Laboratorio de Métricas</h3>
-            <p>Video Actual: <span id="current-video">-</span></p>
+            <p>Video Actual: <span id="current-video" class="metric-value">-</span></p>
             <p>Protocolo: <span class="status-tag" id="protocol-info">Detectando...</span></p>
-            <p>Latencia de Carga: <span id="load-time">0</span> ms</p>
+            <p>TTFF: <span id="metric-ttff" class="metric-value">0</span> ms</p>
+            <p>Carga de Fragmento (Promedio): <span id="metric-frag" class="metric-value">0</span> ms</p>
+            <p>Micro-cortes (Re-buffer): <span id="metric-stall" class="metric-value">0</span></p>
+            <p>Latencia Handshake: <span id="metric-handshake" class="metric-value">0</span> ms</p>
+            <p>Estabilidad (Jitter): <span id="metric-jitter" class="metric-value">0</span> ms</p>
         </div>
     </div>
 
     <script>
         const video = document.getElementById('video');
-        const hls = new Hls();
+        const hls = new Hls({
+            maxBufferLength: 30, 
+            maxMaxBufferLength: 60
+        });
         
-        // --- Variables de Métricas ---
+        // --- Variables Globales de Métricas ---
         let fragmentTimes = [];
         let stallCount = 0;
         let startTime = 0;
         let currentVideoName = "";
+        let ttff_ms = 0;
+        let handshakeLatency_ms = 0;
 
-        // Escuchar carga de fragmentos
+        // Escuchar carga de fragmentos (Throughput Proxy)
         hls.on(Hls.Events.FRAG_BUFFERED, (event, data) => {
             const duration = data.stats.tload - data.stats.trequest;
             fragmentTimes.push(duration);
+            document.getElementById('metric-frag').innerText = (fragmentTimes.reduce((a, b) => a + b, 0) / fragmentTimes.length).toFixed(2);
+            document.getElementById('metric-jitter').innerText = calculateJitter().toFixed(2);
         });
 
-        // Escuchar errores de buffer (Stalls)
+        // Escuchar errores de buffer (Stalls / Re-buffering events)
         hls.on(Hls.Events.ERROR, (event, data) => {
             if (data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR) {
                 stallCount++;
+                document.getElementById('metric-stall').innerText = stallCount;
             }
         });
 
+        // Calcular Time to First Frame (TTFF)
+        video.addEventListener('playing', function onPlaying() {
+            if (ttff_ms === 0) {
+                ttff_ms = performance.now() - startTime;
+                document.getElementById('metric-ttff').innerText = ttff_ms.toFixed(2);
+            }
+        });
+
+        // Función para calcular el Jitter (Variación media entre fragmentos)
+        function calculateJitter() {
+            if (fragmentTimes.length < 2) return 0;
+            let sumDiff = 0;
+            for (let i = 1; i < fragmentTimes.length; i++) {
+                sumDiff += Math.abs(fragmentTimes[i] - fragmentTimes[i-1]);
+            }
+            return sumDiff / (fragmentTimes.length - 1);
+        }
+
         function loadVideo(name) {
-            // Reiniciar métricas para el nuevo video
+            // Reiniciar métricas para el nuevo stream
             fragmentTimes = [];
             stallCount = 0;
+            ttff_ms = 0;
+            handshakeLatency_ms = 0;
             currentVideoName = name;
-            startTime = performance.now();
             
-            const url = `/streams/${name}/index.m3u8`;
+            // Limpiar UI
             document.getElementById('current-video').innerText = name;
+            document.getElementById('protocol-info').innerText = "Detectando...";
+            document.getElementById('metric-ttff').innerText = "0";
+            document.getElementById('metric-frag').innerText = "0";
+            document.getElementById('metric-stall').innerText = "0";
+            document.getElementById('metric-handshake').innerText = "0";
+            document.getElementById('metric-jitter').innerText = "0";
+
+            const url = `/streams/${name}/index.m3u8`;
+            startTime = performance.now(); // Iniciar reloj
 
             if (Hls.isSupported()) {
                 hls.loadSource(url);
                 hls.attachMedia(video);
-                hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                    const endTime = performance.now();
-                    document.getElementById('load-time').innerText = Math.round(endTime - startTime);
+                
+                hls.once(Hls.Events.MANIFEST_PARSED, () => {
+                    // Extraer protocolo y handshake desde la API de Performance del navegador
+                    setTimeout(() => {
+                        const entries = window.performance.getEntriesByType('resource');
+                        const manifestEntry = entries.find(r => r.name.includes('.m3u8'));
+                        
+                        if (manifestEntry) {
+                            document.getElementById('protocol-info').innerText = manifestEntry.nextHopProtocol || "H2/H3";
+                            
+                            // Handshake Latency: Tiempo de conexión TCP/QUIC + TLS
+                            handshakeLatency_ms = manifestEntry.connectEnd - manifestEntry.connectStart;
+                            if (handshakeLatency_ms < 0) handshakeLatency_ms = 0; // H3 0-RTT fallback
+                            document.getElementById('metric-handshake').innerText = handshakeLatency_ms.toFixed(2);
+                        }
+                    }, 500); // Pequeño delay para asegurar que la API registre el recurso
                     
-                    // Detectar protocolo tras cargar el manifiesto
-                    const entries = window.performance.getEntriesByType('resource');
-                    const lastEntry = entries.find(r => r.name.includes('.m3u8'));
-                    document.getElementById('protocol-info').innerText = lastEntry ? lastEntry.nextHopProtocol : "H2/H3";
-                    
-                    video.play();
+                    video.play().catch(e => console.log("Autoplay prevenido. Haz clic en play."));
                 });
             }
             else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                // Fallback para Safari (HLS nativo)
                 video.src = url;
                 video.addEventListener('loadedmetadata', () => {
                     video.play();
@@ -97,7 +148,11 @@
 
         async function handleSendMetrics() {
             if (!currentVideoName) {
-                alert("Primero selecciona un video.");
+                alert("Primero selecciona un video y déjalo reproducir para recopilar datos.");
+                return;
+            }
+            if (ttff_ms === 0) {
+                alert("El video aún no ha iniciado. Espera al primer frame.");
                 return;
             }
             await sendMetrics(currentVideoName);
@@ -108,15 +163,18 @@
                 ? fragmentTimes.reduce((a, b) => a + b, 0) / fragmentTimes.length 
                 : 0;
 
-            const protocol = window.performance.getEntriesByType('resource')
-                            .find(r => r.name.includes('.m3u8'))?.nextHopProtocol || "unknown";
+            const protocolStr = document.getElementById('protocol-info').innerText;
+            const jitterValue = calculateJitter();
 
+            // Este Payload ahora hace MATCH EXACTO con el modelo Pydantic de Python
             const payload = {
                 video_name: videoName,
-                protocol: protocol,
-                load_time_ms: Math.round(performance.now() - startTime),
-                avg_fragment_time: Math.round(avgFrag),
-                buffering_events: stallCount
+                protocol: protocolStr,
+                ttff_ms: parseFloat(ttff_ms.toFixed(2)),
+                fragment_load_time_ms: parseFloat(avgFrag.toFixed(2)),
+                rebuffering_events: stallCount,
+                handshake_latency_ms: parseFloat(handshakeLatency_ms.toFixed(2)),
+                jitter_ms: parseFloat(jitterValue.toFixed(2))
             };
 
             try {
@@ -127,18 +185,15 @@
                 });
                 
                 if(response.ok) {
-                    alert("Métricas enviadas al búnker con éxito.");
+                    alert("✅ Métricas enviadas al búnker con éxito y registradas en CSV.");
                 } else {
-                    alert("Error al enviar métricas al servidor.");
+                    const errDetail = await response.text();
+                    alert(`❌ Error al enviar métricas: ${errDetail}`);
                 }
             } catch (err) {
                 console.error("Error de red:", err);
-                alert("No se pudo conectar con el búnker.");
+                alert("❌ No se pudo conectar con el servidor.");
             }
-            
-            // Limpiar para la siguiente prueba
-            fragmentTimes = [];
-            stallCount = 0;
         }
     </script>
 </body>
