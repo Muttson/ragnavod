@@ -56,19 +56,38 @@
         let fragmentTimes = [];
         let stallCount = 0;
         let startTime = 0;
-        let currentVideoName = "";
         let ttff_ms = 0;
-        let handshakeLatency_ms = 0;
+        let isFirstPlay = true;
+        let currentVideoName = "";
+        let isPlaying = false;
+        let metricsMonitorInterval = null;
 
-        // Escuchar carga de fragmentos (Throughput Proxy)
+        // 1. Fragment Load Time (Hls.js v1+ API) - Captura en tiempo real
         hls.on(Hls.Events.FRAG_BUFFERED, (event, data) => {
-            const duration = data.stats.tload - data.stats.trequest;
-            fragmentTimes.push(duration);
-            document.getElementById('metric-frag').innerText = (fragmentTimes.reduce((a, b) => a + b, 0) / fragmentTimes.length).toFixed(2);
-            document.getElementById('metric-jitter').innerText = calculateJitter().toFixed(2);
+            try {
+                const stats = data.frag.stats.loading;
+                if (stats.start && stats.end) {
+                    const duration = stats.end - stats.start;
+                    fragmentTimes.push(duration);
+                    
+                    // Actualizar UI en tiempo real
+                    updateFragmentMetrics();
+                }
+            } catch (e) {
+                console.warn("No se pudieron leer las métricas del fragmento", e);
+            }
         });
 
-        // Escuchar errores de buffer (Stalls / Re-buffering events)
+        // Función auxiliar para actualizar métricas de fragmentos
+        function updateFragmentMetrics() {
+            if (fragmentTimes.length > 0) {
+                const avg = fragmentTimes.reduce((a, b) => a + b, 0) / fragmentTimes.length;
+                document.getElementById('metric-frag').innerText = avg.toFixed(2);
+                document.getElementById('metric-jitter').innerText = calculateJitter(fragmentTimes).toFixed(2);
+            }
+        }
+
+        // 2. Re-buffering Events
         hls.on(Hls.Events.ERROR, (event, data) => {
             if (data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR) {
                 stallCount++;
@@ -76,31 +95,59 @@
             }
         });
 
-        // Calcular Time to First Frame (TTFF)
-        video.addEventListener('playing', function onPlaying() {
-            if (ttff_ms === 0) {
+        // 3. Time to First Frame (TTFF)
+        video.addEventListener('playing', () => {
+            if (isFirstPlay) {
                 ttff_ms = performance.now() - startTime;
                 document.getElementById('metric-ttff').innerText = ttff_ms.toFixed(2);
+                isFirstPlay = false;
+                isPlaying = true;
+                
+                // Iniciar monitoreo continuo de métricas
+                startMetricsMonitoring();
             }
         });
 
-        // Función para calcular el Jitter (Variación media entre fragmentos)
-        function calculateJitter() {
-            if (fragmentTimes.length < 2) return 0;
+        // Monitoreo continuo de métricas durante la reproducción
+        function startMetricsMonitoring() {
+            if (metricsMonitorInterval) clearInterval(metricsMonitorInterval);
+            
+            metricsMonitorInterval = setInterval(() => {
+                if (isPlaying) {
+                    // Actualizar fragmentos en tiempo real
+                    updateFragmentMetrics();
+                }
+            }, 500);
+        }
+
+        // Detener monitoreo cuando se pausa o termina
+        video.addEventListener('pause', () => {
+            isPlaying = false;
+            if (metricsMonitorInterval) clearInterval(metricsMonitorInterval);
+        });
+
+        video.addEventListener('ended', () => {
+            isPlaying = false;
+            if (metricsMonitorInterval) clearInterval(metricsMonitorInterval);
+        });
+
+        function calculateJitter(times) {
+            if (times.length < 2) return 0;
             let sumDiff = 0;
-            for (let i = 1; i < fragmentTimes.length; i++) {
-                sumDiff += Math.abs(fragmentTimes[i] - fragmentTimes[i-1]);
+            for (let i = 1; i < times.length; i++) {
+                sumDiff += Math.abs(times[i] - times[i - 1]);
             }
-            return sumDiff / (fragmentTimes.length - 1);
+            return sumDiff / (times.length - 1);
         }
 
         function loadVideo(name) {
-            // Reiniciar métricas para el nuevo stream
+            // Reiniciar métricas
             fragmentTimes = [];
             stallCount = 0;
             ttff_ms = 0;
-            handshakeLatency_ms = 0;
+            isFirstPlay = true;
             currentVideoName = name;
+            startTime = performance.now();
             
             // Limpiar UI
             document.getElementById('current-video').innerText = name;
@@ -112,14 +159,13 @@
             document.getElementById('metric-jitter').innerText = "0";
 
             const url = `/streams/${name}/index.m3u8`;
-            startTime = performance.now(); // Iniciar reloj
 
             if (Hls.isSupported()) {
                 hls.loadSource(url);
                 hls.attachMedia(video);
                 
                 hls.once(Hls.Events.MANIFEST_PARSED, () => {
-                    // Extraer protocolo y handshake desde la API de Performance del navegador
+                    // Extraer protocolo y handshake
                     setTimeout(() => {
                         const entries = window.performance.getEntriesByType('resource');
                         const manifestEntry = entries.find(r => r.name.includes('.m3u8'));
@@ -127,32 +173,34 @@
                         if (manifestEntry) {
                             document.getElementById('protocol-info').innerText = manifestEntry.nextHopProtocol || "H2/H3";
                             
-                            // Handshake Latency: Tiempo de conexión TCP/QUIC + TLS
-                            handshakeLatency_ms = manifestEntry.connectEnd - manifestEntry.connectStart;
-                            if (handshakeLatency_ms < 0) handshakeLatency_ms = 0; // H3 0-RTT fallback
-                            document.getElementById('metric-handshake').innerText = handshakeLatency_ms.toFixed(2);
+                            // Handshake Latency mejorado
+                            let handshake_ms = 0;
+                            if (manifestEntry.secureConnectionStart > 0) {
+                                handshake_ms = manifestEntry.connectEnd - manifestEntry.secureConnectionStart;
+                            } else {
+                                handshake_ms = manifestEntry.connectEnd - manifestEntry.connectStart;
+                            }
+                            if (handshake_ms < 0) handshake_ms = 0;
+                            document.getElementById('metric-handshake').innerText = handshake_ms.toFixed(2);
                         }
-                    }, 500); // Pequeño delay para asegurar que la API registre el recurso
+                    }, 500);
                     
-                    video.play().catch(e => console.log("Autoplay prevenido. Haz clic en play."));
+                    video.play().catch(e => console.log("Autoplay prevenido."));
                 });
             }
             else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                // Fallback para Safari (HLS nativo)
                 video.src = url;
-                video.addEventListener('loadedmetadata', () => {
-                    video.play();
-                });
+                video.addEventListener('loadedmetadata', () => video.play());
             }
         }
 
         async function handleSendMetrics() {
             if (!currentVideoName) {
-                alert("Primero selecciona un video y déjalo reproducir para recopilar datos.");
+                alert("Primero selecciona un video.");
                 return;
             }
-            if (ttff_ms === 0) {
-                alert("El video aún no ha iniciado. Espera al primer frame.");
+            if (isFirstPlay && ttff_ms === 0) {
+                alert("Espera a que el video inicie para capturar el TTFF.");
                 return;
             }
             await sendMetrics(currentVideoName);
@@ -162,19 +210,21 @@
             const avgFrag = fragmentTimes.length > 0 
                 ? fragmentTimes.reduce((a, b) => a + b, 0) / fragmentTimes.length 
                 : 0;
-
+            const jitter_ms = fragmentTimes.length > 0 ? calculateJitter(fragmentTimes) : 0;
             const protocolStr = document.getElementById('protocol-info').innerText;
-            const jitterValue = calculateJitter();
+            
+            // Handshake desde la UI para consistencia
+            const handshake_ms = parseFloat(document.getElementById('metric-handshake').innerText) || 0;
 
-            // Este Payload ahora hace MATCH EXACTO con el modelo Pydantic de Python
+            // Garantizar que TODOS los valores sean números válidos (nunca null ni undefined)
             const payload = {
-                video_name: videoName,
-                protocol: protocolStr,
-                ttff_ms: parseFloat(ttff_ms.toFixed(2)),
-                fragment_load_time_ms: parseFloat(avgFrag.toFixed(2)),
-                rebuffering_events: stallCount,
-                handshake_latency_ms: parseFloat(handshakeLatency_ms.toFixed(2)),
-                jitter_ms: parseFloat(jitterValue.toFixed(2))
+                video_name: videoName || "unknown",
+                protocol: protocolStr || "Unknown",
+                ttff_ms: Math.max(0, parseFloat(ttff_ms.toFixed(2)) || 0),
+                fragment_load_time_ms: Math.max(0, parseFloat(avgFrag.toFixed(2)) || 0),
+                rebuffering_events: Math.max(0, parseInt(stallCount) || 0),
+                handshake_latency_ms: Math.max(0, parseFloat(handshake_ms.toFixed(2)) || 0),
+                jitter_ms: Math.max(0, parseFloat(jitter_ms.toFixed(2)) || 0)
             };
 
             try {
@@ -185,7 +235,7 @@
                 });
                 
                 if(response.ok) {
-                    alert("✅ Métricas enviadas al búnker con éxito y registradas en CSV.");
+                    alert("✅ Métricas enviadas al búnker con éxito.");
                 } else {
                     const errDetail = await response.text();
                     alert(`❌ Error al enviar métricas: ${errDetail}`);
