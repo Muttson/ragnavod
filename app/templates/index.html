@@ -78,13 +78,17 @@
             }
         });
 
-        // Función auxiliar para actualizar métricas de fragmentos
+        // Función auxiliar para actualizar métricas de fragmentos usando el historial completo
         function updateFragmentMetrics() {
             if (fragmentTimes.length > 0) {
-                const avg = fragmentTimes.reduce((a, b) => a + b, 0) / fragmentTimes.length;
-                document.getElementById('metric-frag').innerText = avg.toFixed(2);
-                document.getElementById('metric-inter-jitter').innerText = calculateInterArrivalJitter(fragmentTimes).toFixed(2);
-                document.getElementById('metric-jitter').innerText = calculateJitter(fragmentTimes).toFixed(2);
+                const totalFragments = fragmentTimes.length;
+                const averageFragmentTime = fragmentTimes.reduce((a, b) => a + b, 0) / totalFragments;
+                const interArrivalJitter = calculateInterArrivalJitter(fragmentTimes);
+                const stabilityJitter = calculateJitter(fragmentTimes);
+
+                document.getElementById('metric-frag').innerText = averageFragmentTime.toFixed(2);
+                document.getElementById('metric-inter-jitter').innerText = interArrivalJitter.toFixed(2);
+                document.getElementById('metric-jitter').innerText = stabilityJitter.toFixed(2);
             }
         }
 
@@ -212,11 +216,12 @@
         }
 
         async function sendMetrics(videoName) {
-            const avgFrag = fragmentTimes.length > 0 
-                ? fragmentTimes.reduce((a, b) => a + b, 0) / fragmentTimes.length 
+            const totalFragments = fragmentTimes.length;
+            const averageFragmentTime = totalFragments > 0 
+                ? fragmentTimes.reduce((a, b) => a + b, 0) / totalFragments 
                 : 0;
-            const interArrivalJitter = fragmentTimes.length > 0 ? calculateInterArrivalJitter(fragmentTimes) : 0;
-            const jitter_ms = fragmentTimes.length > 0 ? calculateJitter(fragmentTimes) : 0;
+            const interArrivalJitter = totalFragments > 0 ? calculateInterArrivalJitter(fragmentTimes) : 0;
+            const stabilityJitter = totalFragments > 0 ? calculateJitter(fragmentTimes) : 0;
             const protocolStr = document.getElementById('protocol-info').innerText;
 
             // Garantizar que TODOS los valores sean números válidos (nunca null ni undefined)
@@ -224,10 +229,10 @@
                 video_name: videoName || "unknown",
                 protocol: protocolStr || "Unknown",
                 ttff_ms: Math.max(0, parseFloat(ttff_ms.toFixed(2)) || 0),
-                fragment_load_time_ms: Math.max(0, parseFloat(avgFrag.toFixed(2)) || 0),
+                fragment_load_time_ms: Math.max(0, parseFloat(averageFragmentTime.toFixed(2)) || 0),
                 rebuffering_events: Math.max(0, parseInt(stallCount) || 0),
                 inter_arrival_jitter_ms: Math.max(0, parseFloat(interArrivalJitter.toFixed(2)) || 0),
-                jitter_ms: Math.max(0, parseFloat(jitter_ms.toFixed(2)) || 0)
+                jitter_ms: Math.max(0, parseFloat(stabilityJitter.toFixed(2)) || 0)
             };
 
             try {
