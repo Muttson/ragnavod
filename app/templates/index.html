@@ -1,22 +1,3 @@
-<!-- <!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>RAGNAVOD | Stream</title>
-    <style>
-        body { background: #121212; color: #00ff41; font-family: 'Courier New', monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
-        .bunker-status { border: 1px solid #00ff41; padding: 20px; border-radius: 5px; }
-    </style>
-</head>
-<body>
-    <div class="bunker-status">
-        <h1>[ RAGNAVOD - :D ]</h1>
-        <p>Estado del Backend: <span style="color: white;">ONLINE</span></p>
-        <p>Listo para recibir fragmentos de video...</p>
-    </div>
-</body>
-</html> -->
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -27,9 +8,11 @@
         body { background: #0f0f0f; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; text-align: center; }
         .container { max-width: 900px; margin: auto; padding: 20px; }
         video { width: 100%; border: 2px solid #333; border-radius: 8px; background: #000; }
-        .controls { margin-top: 20px; display: flex; justify-content: center; gap: 10px; }
+        .controls { margin-top: 20px; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
         button { padding: 10px 20px; cursor: pointer; background: #1a73e8; color: white; border: none; border-radius: 4px; }
         button:hover { background: #1557b0; }
+        .btn-send { background: #28a745; }
+        .btn-send:hover { background: #218838; }
         .metrics { margin-top: 20px; padding: 15px; background: #1e1e1e; border-radius: 8px; text-align: left; }
         .status-tag { color: #00ff00; font-weight: bold; }
     </style>
@@ -44,12 +27,13 @@
             <button onclick="loadVideo('bubbles')">Bubbles</button>
             <button onclick="loadVideo('fishing')">Fishing</button>
             <button onclick="loadVideo('flower')">Flower</button>
+            <button class="btn-send" onclick="handleSendMetrics()">🚀 Enviar Reporte al Búnker</button>
         </div>
 
         <div class="metrics">
             <h3>Laboratorio de Métricas</h3>
             <p>Video Actual: <span id="current-video">-</span></p>
-            <p>Protocolo: <span class="status-tag" id="protocol-info">Detectando... (Usa F12)</span></p>
+            <p>Protocolo: <span class="status-tag" id="protocol-info">Detectando...</span></p>
             <p>Latencia de Carga: <span id="load-time">0</span> ms</p>
         </div>
     </div>
@@ -57,11 +41,34 @@
     <script>
         const video = document.getElementById('video');
         const hls = new Hls();
+        
+        // --- Variables de Métricas ---
+        let fragmentTimes = [];
+        let stallCount = 0;
+        let startTime = 0;
+        let currentVideoName = "";
+
+        // Escuchar carga de fragmentos
+        hls.on(Hls.Events.FRAG_BUFFERED, (event, data) => {
+            const duration = data.stats.tload - data.stats.trequest;
+            fragmentTimes.push(duration);
+        });
+
+        // Escuchar errores de buffer (Stalls)
+        hls.on(Hls.Events.ERROR, (event, data) => {
+            if (data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR) {
+                stallCount++;
+            }
+        });
 
         function loadVideo(name) {
-            const startTime = performance.now();
-            const url = `/streams/${name}/index.m3u8`;
+            // Reiniciar métricas para el nuevo video
+            fragmentTimes = [];
+            stallCount = 0;
+            currentVideoName = name;
+            startTime = performance.now();
             
+            const url = `/streams/${name}/index.m3u8`;
             document.getElementById('current-video').innerText = name;
 
             if (Hls.isSupported()) {
@@ -70,10 +77,15 @@
                 hls.on(Hls.Events.MANIFEST_PARSED, () => {
                     const endTime = performance.now();
                     document.getElementById('load-time').innerText = Math.round(endTime - startTime);
+                    
+                    // Detectar protocolo tras cargar el manifiesto
+                    const entries = window.performance.getEntriesByType('resource');
+                    const lastEntry = entries.find(r => r.name.includes('.m3u8'));
+                    document.getElementById('protocol-info').innerText = lastEntry ? lastEntry.nextHopProtocol : "H2/H3";
+                    
                     video.play();
                 });
             }
-            // Soporte para Safari
             else if (video.canPlayType('application/vnd.apple.mpegurl')) {
                 video.src = url;
                 video.addEventListener('loadedmetadata', () => {
@@ -82,10 +94,50 @@
             }
         }
 
-        // Detección de Protocolo simple
-        if (window.chrome && window.chrome.loadTimes) {
-            const proto = window.performance.getEntriesByType('resource')[0].nextHopProtocol;
-            document.getElementById('protocol-info').innerText = proto || "H2/H3 (Verificar en Network tab)";
+        async function handleSendMetrics() {
+            if (!currentVideoName) {
+                alert("Primero selecciona un video.");
+                return;
+            }
+            await sendMetrics(currentVideoName);
+        }
+
+        async function sendMetrics(videoName) {
+            const avgFrag = fragmentTimes.length > 0 
+                ? fragmentTimes.reduce((a, b) => a + b, 0) / fragmentTimes.length 
+                : 0;
+
+            const protocol = window.performance.getEntriesByType('resource')
+                            .find(r => r.name.includes('.m3u8'))?.nextHopProtocol || "unknown";
+
+            const payload = {
+                video_name: videoName,
+                protocol: protocol,
+                load_time_ms: Math.round(performance.now() - startTime),
+                avg_fragment_time: Math.round(avgFrag),
+                buffering_events: stallCount
+            };
+
+            try {
+                const response = await fetch('/api/log_metrics', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                if(response.ok) {
+                    alert("Métricas enviadas al búnker con éxito.");
+                } else {
+                    alert("Error al enviar métricas al servidor.");
+                }
+            } catch (err) {
+                console.error("Error de red:", err);
+                alert("No se pudo conectar con el búnker.");
+            }
+            
+            // Limpiar para la siguiente prueba
+            fragmentTimes = [];
+            stallCount = 0;
         }
     </script>
 </body>
