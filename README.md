@@ -133,5 +133,5 @@ Los datos extraídos del colector (`metrics.csv`) durante las corridas de prueba
 
 ---
 
-## 👨‍💻 Autores
-- **Matías Rivera** (00335052) — *Universidad San Francisco de Quito (USFQ)*
+## 👨‍💻 Autor
+- **Matías Rivera
